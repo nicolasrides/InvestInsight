@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { Plan, Activity, ActivityEdge } from '@/types/database'
+import type { Plan, Activity, ActivityEdge, AcceptanceCriterion } from '@/types/database'
 
 export function usePlan(planId: string) {
   const [plan, setPlan] = useState<Plan | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
   const [edges, setEdges] = useState<ActivityEdge[]>([])
+  const [criteria, setCriteria] = useState<AcceptanceCriterion[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -16,10 +17,11 @@ export function usePlan(planId: string) {
       setLoading(true)
       setError(null)
 
-      const [planRes, activitiesRes, edgesRes] = await Promise.all([
+      const [planRes, activitiesRes, edgesRes, criteriaRes] = await Promise.all([
         supabase.from('plans').select('*').eq('id', planId).single(),
         supabase.from('activities').select('*').eq('plan_id', planId),
         supabase.from('activity_edges').select('*').eq('plan_id', planId),
+        supabase.from('acceptance_criteria').select('*').eq('plan_id', planId).order('sort_order'),
       ])
 
       if (planRes.error) { setError(planRes.error.message); setLoading(false); return }
@@ -29,13 +31,12 @@ export function usePlan(planId: string) {
       setPlan(planRes.data)
       setActivities(activitiesRes.data ?? [])
       setEdges(edgesRes.data ?? [])
+      setCriteria(criteriaRes.data ?? [])
       setLoading(false)
     }
 
     load()
 
-    // Realtime: activities
-    // Note: enable realtime for these tables in your Supabase project settings
     const channel = supabase
       .channel(`plan-${planId}`)
       .on(
@@ -64,10 +65,29 @@ export function usePlan(planId: string) {
           }
         },
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'acceptance_criteria', filter: `plan_id=eq.${planId}` },
+        payload => {
+          if (payload.eventType === 'INSERT') {
+            setCriteria(prev =>
+              prev.some(c => c.id === (payload.new as AcceptanceCriterion).id)
+                ? prev
+                : [...prev, payload.new as AcceptanceCriterion],
+            )
+          } else if (payload.eventType === 'UPDATE') {
+            setCriteria(prev =>
+              prev.map(c => c.id === (payload.new as AcceptanceCriterion).id ? payload.new as AcceptanceCriterion : c),
+            )
+          } else if (payload.eventType === 'DELETE') {
+            setCriteria(prev => prev.filter(c => c.id !== (payload.old as { id: string }).id))
+          }
+        },
+      )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }, [planId])
 
-  return { plan, activities, edges, loading, error }
+  return { plan, activities, edges, criteria, loading, error }
 }

@@ -20,6 +20,7 @@ import '@xyflow/react/dist/style.css'
 import { supabase } from '@/lib/supabase'
 import { usePlan } from '@/hooks/usePlan'
 import { computeGraphStates } from '@/lib/graphState'
+import { GraphContext } from '@/lib/graphContext'
 import ActivityNode from '@/components/ActivityNode'
 import type { ActivityNodeType } from '@/components/ActivityNode'
 import ActivityPanel from '@/components/ActivityPanel'
@@ -34,7 +35,8 @@ function PlanGraphInner({ planId }: { planId: string }) {
   const navigate = useNavigate()
   const { screenToFlowPosition } = useReactFlow()
 
-  const { plan, activities, edges: dbEdges, loading, error } = usePlan(planId)
+  const { plan, activities, edges: dbEdges, criteria, loading, error } = usePlan(planId)
+  const [nodesExpanded, setNodesExpanded] = useState(false)
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<ActivityNodeType>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -48,6 +50,16 @@ function PlanGraphInner({ planId }: { planId: string }) {
     () => computeGraphStates(activities, dbEdges),
     [activities, dbEdges],
   )
+
+  const criteriaByActivity = useMemo(() => {
+    const map = new Map<string, typeof criteria>()
+    for (const c of criteria) {
+      const list = map.get(c.activity_id) ?? []
+      list.push(c)
+      map.set(c.activity_id, list)
+    }
+    return map
+  }, [criteria])
 
   // Sync DB activities → RF nodes.
   // For existing nodes: only update data (name, status, etc.) — never touch position.
@@ -63,6 +75,8 @@ function PlanGraphInner({ planId }: { planId: string }) {
         const nodeData = {
           activity: a,
           graphState,
+          currency: plan.currency,
+          criteria: criteriaByActivity.get(a.id) ?? [],
           onRename: renameActivity,
         }
 
@@ -80,7 +94,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
         }
       })
     })
-  }, [activities, graphStates])
+  }, [activities, graphStates, criteriaByActivity])
 
   // Sync DB edges → RF edges
   useEffect(() => {
@@ -282,6 +296,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
   }
 
   return (
+    <GraphContext.Provider value={{ expanded: nodesExpanded }}>
     <div className="h-screen flex flex-col bg-slate-950">
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 flex-shrink-0">
@@ -297,6 +312,13 @@ function PlanGraphInner({ planId }: { planId: string }) {
           <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">Archived</span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setNodesExpanded(v => !v)}
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-slate-300"
+            title={nodesExpanded ? 'Collapse node details' : 'Expand node details'}
+          >
+            {nodesExpanded ? '⊟ Collapse' : '⊞ Expand'}
+          </button>
           <button
             onClick={addActivity}
             className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-white"
@@ -365,6 +387,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
         )}
       </div>
     </div>
+    </GraphContext.Provider>
   )
 }
 
