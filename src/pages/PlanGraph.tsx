@@ -66,6 +66,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
   // Position is managed by React Flow during drag and saved explicitly on drag-stop.
   // For new nodes (added by this user or a collaborator): use the DB position.
   useEffect(() => {
+    if (!plan) return
     setRfNodes(prev => {
       const prevMap = new Map(prev.map(n => [n.id, n]))
       return activities.map(a => {
