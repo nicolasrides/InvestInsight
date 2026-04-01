@@ -95,7 +95,16 @@ function PlanGraphInner({ planId }: { planId: string }) {
         }
       })
     })
-  }, [activities, graphStates, criteriaByActivity, nodesExpanded])
+  }, [activities, graphStates, criteriaByActivity])
+
+  // Patch expanded flag without rebuilding the full node array —
+  // a full rebuild causes React Flow to fire onNodeDoubleClick on new nodes.
+  useEffect(() => {
+    setRfNodes(prev => prev.map(n => ({
+      ...n,
+      data: { ...n.data, expanded: nodesExpanded },
+    })))
+  }, [nodesExpanded])
 
   // Sync DB edges → RF edges
   useEffect(() => {
@@ -266,11 +275,12 @@ function PlanGraphInner({ planId }: { planId: string }) {
     })
   }, [activities, planId])
 
-  async function deleteActivity(id: string) {
+  const onNodesDelete = useCallback((deleted: ActivityNodeType[]) => {
     setSelectedActivityId(null)
-    const { error } = await supabase.from('activities').delete().eq('id', id)
-    if (error) console.error('Delete activity error:', error.message)
-  }
+    for (const node of deleted) {
+      supabase.from('activities').delete().eq('id', node.id)
+    }
+  }, [])
 
   async function deleteEdge(edgeId: string) {
     await supabase.from('activity_edges').delete().eq('id', edgeId)
@@ -341,6 +351,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
             onNodeClick={(_e, node) => setSelectedActivityId(node.id)}
             onNodeDoubleClick={onNodeDoubleClick}
             onNodeDragStop={onNodeDragStop}
+            onNodesDelete={onNodesDelete}
             onEdgeClick={(_e, edge) => deleteEdge(edge.id)}
             onPaneClick={() => setSelectedActivityId(null)}
             fitView
@@ -382,7 +393,6 @@ function PlanGraphInner({ planId }: { planId: string }) {
             currency={plan.currency}
             onClose={() => setSelectedActivityId(null)}
             onSave={updates => saveActivity(selectedActivity.id, updates)}
-            onDelete={() => deleteActivity(selectedActivity.id)}
           />
         )}
       </div>

@@ -7,7 +7,6 @@ interface Props {
   currency: string
   onClose: () => void
   onSave: (updates: Partial<Activity>) => Promise<void>
-  onDelete: () => Promise<void>
 }
 
 function variance(planned: number | null, actual: number | null): string | null {
@@ -25,7 +24,7 @@ function varianceColor(planned: number | null, actual: number | null, inverseGoo
   return overIsGood ? 'text-emerald-400' : 'text-red-400'
 }
 
-export default function ActivityPanel({ activity, currency, onClose, onSave, onDelete }: Props) {
+export default function ActivityPanel({ activity, currency, onClose, onSave }: Props) {
   // ── Activity fields ────────────────────────────────────────
   const [name, setName] = useState(activity.name)
   const [timePlanned, setTimePlanned] = useState(activity.time_planned?.toString() ?? '')
@@ -35,7 +34,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
   const [returnPlanned, setReturnPlanned] = useState(activity.return_planned?.toString() ?? '')
   const [returnActual, setReturnActual] = useState(activity.return_actual?.toString() ?? '')
   const [outcomeStatus, setOutcomeStatus] = useState(activity.outcome_status ?? '')
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const [saving, setSaving] = useState(false)
 
   // ── Acceptance criteria ────────────────────────────────────
@@ -416,37 +414,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
           </div>
         </div>
 
-        <hr className="border-slate-800" />
-
-        {/* Delete */}
-        <div>
-          {confirmDelete ? (
-            <div className="space-y-2">
-              <p className="text-xs text-red-400">Delete this activity and all its edges?</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={onDelete}
-                  className="flex-1 rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
-                >
-                  Yes, delete
-                </button>
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  className="flex-1 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="text-xs text-red-500 hover:text-red-400"
-            >
-              Delete activity
-            </button>
-          )}
-        </div>
       </div>
 
       {saving && (
