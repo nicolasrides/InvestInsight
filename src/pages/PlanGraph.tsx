@@ -20,7 +20,6 @@ import '@xyflow/react/dist/style.css'
 import { supabase } from '@/lib/supabase'
 import { usePlan } from '@/hooks/usePlan'
 import { computeGraphStates } from '@/lib/graphState'
-import { GraphContext } from '@/lib/graphContext'
 import ActivityNode from '@/components/ActivityNode'
 import type { ActivityNodeType } from '@/components/ActivityNode'
 import ActivityPanel from '@/components/ActivityPanel'
@@ -78,6 +77,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
           graphState,
           currency: plan.currency,
           criteria: criteriaByActivity.get(a.id) ?? [],
+          expanded: nodesExpanded,
           onRename: renameActivity,
         }
 
@@ -95,7 +95,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
         }
       })
     })
-  }, [activities, graphStates, criteriaByActivity])
+  }, [activities, graphStates, criteriaByActivity, nodesExpanded])
 
   // Sync DB edges → RF edges
   useEffect(() => {
@@ -297,7 +297,6 @@ function PlanGraphInner({ planId }: { planId: string }) {
   }
 
   return (
-    <GraphContext.Provider value={{ expanded: nodesExpanded }}>
     <div className="h-screen flex flex-col bg-slate-950">
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 flex-shrink-0">
@@ -388,7 +387,6 @@ function PlanGraphInner({ planId }: { planId: string }) {
         )}
       </div>
     </div>
-    </GraphContext.Provider>
   )
 }
 

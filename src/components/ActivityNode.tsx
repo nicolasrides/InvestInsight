@@ -2,13 +2,13 @@ import { useRef, useState } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { Node, NodeProps } from '@xyflow/react'
 import type { AcceptanceCriterion, Activity, ActivityGraphState } from '@/types/database'
-import { useGraphContext } from '@/lib/graphContext'
 
 export type ActivityNodeData = {
   activity: Activity
   graphState: ActivityGraphState
   currency: string
   criteria: AcceptanceCriterion[]
+  expanded: boolean
   onRename: (id: string, name: string) => void
 }
 
@@ -71,8 +71,7 @@ function PencilIcon() {
 }
 
 export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeType>) {
-  const { activity, graphState, currency, criteria, onRename } = data
-  const { expanded } = useGraphContext()
+  const { activity, graphState, currency, criteria, expanded, onRename } = data
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(activity.name)
   const inputRef = useRef<HTMLInputElement>(null)
