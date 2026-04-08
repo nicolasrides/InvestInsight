@@ -33,6 +33,11 @@ export default function PlanSummaryBar({ activities, criteria, currency }: Props
     archived:  activities.filter(a => a.lifecycle_status === 'archived').length,
   }
 
+  const timePlanned    = activities.reduce((s, a) => s + (a.time_planned        ?? 0), 0)
+  const timeActual     = activities.reduce((s, a) => s + (a.time_actual         ?? 0), 0)
+  const hasTime        = activities.some(a => a.time_planned != null)
+  const hasTimeActual  = activities.some(a => a.time_actual != null)
+
   const investPlanned  = activities.reduce((s, a) => s + (a.investment_planned  ?? 0), 0)
   const investActual   = activities.reduce((s, a) => s + (a.investment_actual   ?? 0), 0)
   const returnPlanned  = activities.reduce((s, a) => s + (a.return_planned      ?? 0), 0)
@@ -63,6 +68,21 @@ export default function PlanSummaryBar({ activities, criteria, currency }: Props
           <span className="text-xs text-slate-400 tabular-nums">{activities.length} total</span>
         )}
       </Stat>
+
+      {/* Duration */}
+      {hasTime && (
+        <Stat label="Duration">
+          <span className="text-slate-300 text-xs tabular-nums">{timePlanned}d</span>
+          {hasTimeActual && (
+            <>
+              <span className="text-slate-600 text-xs">→</span>
+              <span className={`text-xs tabular-nums ${timeActual <= timePlanned ? 'text-emerald-400' : 'text-red-400'}`}>
+                {timeActual}d
+              </span>
+            </>
+          )}
+        </Stat>
+      )}
 
       {/* Investment */}
       {hasInvest && (
