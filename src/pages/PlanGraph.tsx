@@ -25,6 +25,9 @@ import type { ActivityNodeType } from '@/components/ActivityNode'
 import ActivityPanel from '@/components/ActivityPanel'
 import EdgeLabelModal from '@/components/EdgeLabelModal'
 import CustomEdge from '@/components/CustomEdge'
+import PlanSummaryBar from '@/components/PlanSummaryBar'
+import HelpModal from '@/components/HelpModal'
+import UndoToast from '@/components/UndoToast'
 import type { Activity } from '@/types/database'
 
 const nodeTypes = { activity: ActivityNode }
@@ -36,7 +39,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
   const navigate = useNavigate()
   const { screenToFlowPosition, fitView } = useReactFlow()
 
-  const { plan, activities, edges: dbEdges, criteria, loading, error } = usePlan(planId)
+  const { plan, setPlan, activities, edges: dbEdges, criteria, loading, error } = usePlan(planId)
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<ActivityNodeType>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -45,9 +48,30 @@ function PlanGraphInner({ planId }: { planId: string }) {
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(null)
   const [pendingHandleEdge, setPendingHandleEdge] = useState<{ fromId: string; toId: string } | null>(null)
 
+  // ── Undo delete ──────────────────────────────────────────────────────────────
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [pendingDeleteName, setPendingDeleteName] = useState('')
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Plan management ──────────────────────────────────────────────────────────
+  const [editingPlanName, setEditingPlanName] = useState(false)
+  const [planNameDraft, setPlanNameDraft] = useState('')
+  const planNameInputRef = useRef<HTMLInputElement>(null)
+  const [showPlanMenu, setShowPlanMenu] = useState(false)
+  const [confirmingPlanDelete, setConfirmingPlanDelete] = useState(false)
+
+  // ── UI state ─────────────────────────────────────────────────────────────────
+  const [showHelp, setShowHelp] = useState(false)
+
+  // Activities filtered to exclude pending deletes (node still in DB, hidden in UI)
+  const visibleActivities = useMemo(() =>
+    pendingDeleteId ? activities.filter(a => a.id !== pendingDeleteId) : activities,
+    [activities, pendingDeleteId],
+  )
+
   const graphStates = useMemo(
-    () => computeGraphStates(activities, dbEdges),
-    [activities, dbEdges],
+    () => computeGraphStates(visibleActivities, dbEdges),
+    [visibleActivities, dbEdges],
   )
 
   const criteriaByActivity = useMemo(() => {
@@ -78,13 +102,11 @@ function PlanGraphInner({ planId }: { planId: string }) {
   }, [])
 
   // ── Sync DB activities → RF nodes ────────────────────────────────────────────
-  // For existing nodes: only update data, never touch position or expand state.
-  // For new nodes: use DB position, start collapsed.
   useEffect(() => {
     if (!plan) return
     setRfNodes(prev => {
       const prevMap = new Map(prev.map(n => [n.id, n]))
-      return activities.map(a => {
+      return visibleActivities.map(a => {
         const existing = prevMap.get(a.id)
         const graphState = graphStates.get(a.id) ?? 'active'
 
@@ -98,9 +120,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
           onToggleExpand: toggleNodeExpand,
         }
 
-        if (existing) {
-          return { ...existing, data: nodeData }
-        }
+        if (existing) return { ...existing, data: nodeData }
 
         return {
           id: a.id,
@@ -112,7 +132,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
         }
       })
     })
-  }, [activities, graphStates, criteriaByActivity, plan, renameActivity, toggleNodeExpand])
+  }, [visibleActivities, graphStates, criteriaByActivity, plan, renameActivity, toggleNodeExpand])
 
   // ── Sync DB edges → RF edges ─────────────────────────────────────────────────
   useEffect(() => {
@@ -136,10 +156,44 @@ function PlanGraphInner({ planId }: { planId: string }) {
     }
   }, [activities, selectedActivityId])
 
+  // Auto-focus plan name input
+  useEffect(() => {
+    if (editingPlanName) {
+      setTimeout(() => { planNameInputRef.current?.select() }, 0)
+    }
+  }, [editingPlanName])
+
   // ── Computed ─────────────────────────────────────────────────────────────────
   const allExpanded = rfNodes.length > 0 && rfNodes.every(n => n.data.expanded)
+  const selectedActivity = visibleActivities.find(a => a.id === selectedActivityId) ?? null
 
-  // ── Interactions ─────────────────────────────────────────────────────────────
+  // ── Plan management ──────────────────────────────────────────────────────────
+
+  async function savePlanName() {
+    setEditingPlanName(false)
+    const trimmed = planNameDraft.trim()
+    if (!trimmed || !plan || trimmed === plan.name) return
+    setPlan({ ...plan, name: trimmed })
+    await supabase.from('plans').update({ name: trimmed }).eq('id', planId)
+  }
+
+  async function toggleArchivePlan() {
+    if (!plan) return
+    setShowPlanMenu(false)
+    const newStatus = plan.status === 'archived' ? 'active' : 'archived'
+    setPlan({ ...plan, status: newStatus })
+    await supabase.from('plans').update({ status: newStatus }).eq('id', planId)
+  }
+
+  async function deletePlan() {
+    if (!plan) return
+    setShowPlanMenu(false)
+    setConfirmingPlanDelete(false)
+    await supabase.from('plans').delete().eq('id', planId)
+    navigate('/')
+  }
+
+  // ── Activity interactions ─────────────────────────────────────────────────────
 
   async function addActivity() {
     const position = screenToFlowPosition({
@@ -162,9 +216,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
       .select()
       .single()
 
-    if (!error && data) {
-      setSelectedActivityId(data.id)
-    }
+    if (!error && data) setSelectedActivityId(data.id)
   }
 
   const onConnect: OnConnect = useCallback(
@@ -235,10 +287,38 @@ function PlanGraphInner({ planId }: { planId: string }) {
     await supabase.from('activities').update(updates).eq('id', id)
   }
 
-  async function deleteActivity(id: string) {
+  // Soft-delete: remove from UI immediately, defer DB delete by 5s for undo
+  function deleteActivity(id: string) {
+    const name = activities.find(a => a.id === id)?.name ?? 'Activity'
     setSelectedActivityId(null)
     setRfNodes(prev => prev.filter(n => n.id !== id))
-    await supabase.from('activities').delete().eq('id', id)
+    setPendingDeleteId(id)
+    setPendingDeleteName(name)
+
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+    deleteTimerRef.current = setTimeout(() => {
+      supabase.from('activities').delete().eq('id', id)
+      setPendingDeleteId(null)
+      setPendingDeleteName('')
+    }, 5000)
+  }
+
+  function undoDelete() {
+    if (!pendingDeleteId) return
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+    // Activity still in DB — clearing pendingDeleteId causes visibleActivities to include
+    // it again, which triggers the sync effect to restore the node in rfNodes.
+    setPendingDeleteId(null)
+    setPendingDeleteName('')
+  }
+
+  function dismissUndo() {
+    if (!pendingDeleteId) return
+    // Commit the delete immediately instead of waiting for the timer
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+    supabase.from('activities').delete().eq('id', pendingDeleteId)
+    setPendingDeleteId(null)
+    setPendingDeleteName('')
   }
 
   const creatingFromHandle = useRef(false)
@@ -256,7 +336,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
 
     creatingFromHandle.current = true
 
-    const source = activities.find(a => a.id === node.id)
+    const source = visibleActivities.find(a => a.id === node.id)
     if (!source) { creatingFromHandle.current = false; return }
 
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -282,7 +362,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
           setPendingHandleEdge({ fromId, toId })
         })
     })
-  }, [activities, planId])
+  }, [visibleActivities, planId])
 
   const onNodesDelete = useCallback((deleted: ActivityNodeType[]) => {
     setSelectedActivityId(null)
@@ -293,36 +373,21 @@ function PlanGraphInner({ planId }: { planId: string }) {
 
   function toggleAllNodes() {
     const next = !allExpanded
-    setRfNodes(prev => prev.map(n => ({
-      ...n,
-      data: { ...n.data, expanded: next },
-    })))
+    setRfNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, expanded: next } })))
   }
 
   async function layoutHorizontal() {
-    const NODE_WIDTH = 256
-    const GAP = 52
-    const STEP = NODE_WIDTH + GAP
-
+    const STEP = 256 + 52
     const sorted = [...rfNodes].sort((a, b) => a.position.x - b.position.x)
-    const updated = sorted.map((node, i) => ({
-      ...node,
-      position: { x: i * STEP, y: 0 },
-    }))
-
+    const updated = sorted.map((node, i) => ({ ...node, position: { x: i * STEP, y: 0 } }))
     setRfNodes(updated)
-
     for (const node of updated) {
-      supabase
-        .from('activities')
+      supabase.from('activities')
         .update({ position_x: Math.round(node.position.x), position_y: 0 })
         .eq('id', node.id)
     }
-
     setTimeout(() => fitView({ padding: 0.25, duration: 400 }), 50)
   }
-
-  const selectedActivity = activities.find(a => a.id === selectedActivityId) ?? null
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -346,6 +411,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
     <div className="h-screen flex flex-col bg-slate-950">
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 flex-shrink-0">
+        {/* Back */}
         <button
           onClick={() => navigate('/')}
           className="text-slate-400 hover:text-white text-sm px-2 py-1 -mx-2 rounded hover:bg-slate-800 transition-colors flex-shrink-0"
@@ -353,15 +419,50 @@ function PlanGraphInner({ planId }: { planId: string }) {
           ← <span className="hidden sm:inline">Plans</span>
         </button>
         <span className="text-slate-700 flex-shrink-0">|</span>
-        <h1 className="text-sm font-medium text-white truncate">{plan.name}</h1>
+
+        {/* Plan name — inline editable */}
+        {editingPlanName ? (
+          <input
+            ref={planNameInputRef}
+            value={planNameDraft}
+            onChange={e => setPlanNameDraft(e.target.value)}
+            onBlur={savePlanName}
+            onKeyDown={e => {
+              if (e.key === 'Enter') savePlanName()
+              if (e.key === 'Escape') setEditingPlanName(false)
+              e.stopPropagation()
+            }}
+            className="text-sm font-medium text-white bg-slate-800 border border-slate-600 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-slate-400 min-w-0 max-w-40 sm:max-w-56"
+          />
+        ) : (
+          <button
+            onClick={() => { setPlanNameDraft(plan.name); setEditingPlanName(true) }}
+            className="text-sm font-medium text-white hover:text-slate-300 truncate max-w-28 sm:max-w-56 text-left"
+            title="Click to rename"
+          >
+            {plan.name}
+          </button>
+        )}
+
         {plan.status === 'archived' && (
           <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 flex-shrink-0">Archived</span>
         )}
+
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          {/* Help */}
+          <button
+            onClick={() => setShowHelp(true)}
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white transition-colors text-sm font-medium"
+            title="How the graph works"
+          >
+            ?
+          </button>
+
+          {/* Layout */}
           <button
             onClick={layoutHorizontal}
             className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
-            title="Arrange all activities in a horizontal row"
+            title="Arrange activities in a horizontal row"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="flex-shrink-0">
               <rect x="1" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
@@ -370,6 +471,8 @@ function PlanGraphInner({ planId }: { planId: string }) {
             </svg>
             <span className="hidden sm:inline">Layout</span>
           </button>
+
+          {/* Expand/Collapse */}
           <button
             onClick={toggleAllNodes}
             className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
@@ -378,6 +481,8 @@ function PlanGraphInner({ planId }: { planId: string }) {
             <span>{allExpanded ? '⊟' : '⊞'}</span>
             <span className="hidden sm:inline">{allExpanded ? 'Collapse' : 'Expand'}</span>
           </button>
+
+          {/* Add activity */}
           <button
             onClick={addActivity}
             className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-white flex items-center gap-1"
@@ -385,14 +490,72 @@ function PlanGraphInner({ planId }: { planId: string }) {
             <span>+</span>
             <span className="hidden sm:inline"> Add activity</span>
           </button>
+
+          {/* Plan ⋯ menu */}
+          <div className="relative">
+            <button
+              onClick={() => { setShowPlanMenu(v => !v); setConfirmingPlanDelete(false) }}
+              className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+              title="Plan options"
+            >
+              ⋯
+            </button>
+            {showPlanMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowPlanMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-slate-700 bg-slate-900 shadow-xl overflow-hidden">
+                  <button
+                    onClick={toggleArchivePlan}
+                    className="w-full text-left px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
+                  >
+                    {plan.status === 'archived' ? 'Unarchive plan' : 'Archive plan'}
+                  </button>
+                  <div className="border-t border-slate-800" />
+                  {confirmingPlanDelete ? (
+                    <div className="px-3 py-2.5 space-y-2">
+                      <p className="text-xs text-red-400">Delete this plan and all its activities?</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={deletePlan}
+                          className="flex-1 text-xs font-medium text-white bg-red-700 hover:bg-red-600 rounded px-2 py-1 transition-colors"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={() => setConfirmingPlanDelete(false)}
+                          className="flex-1 text-xs text-slate-400 hover:text-slate-300 border border-slate-700 rounded px-2 py-1 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmingPlanDelete(true)}
+                      className="w-full text-left px-3 py-2.5 text-sm text-red-400 hover:bg-slate-800 transition-colors"
+                    >
+                      Delete plan…
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
+
+      {/* Plan summary bar */}
+      <PlanSummaryBar
+        activities={visibleActivities}
+        criteria={criteria}
+        currency={plan.currency}
+      />
 
       {/* Canvas + panel */}
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
           {/* Empty state */}
-          {activities.length === 0 && (
+          {visibleActivities.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
               <div className="text-center space-y-1.5">
                 <p className="text-slate-500 text-sm font-medium">No activities yet</p>
@@ -401,14 +564,23 @@ function PlanGraphInner({ planId }: { planId: string }) {
             </div>
           )}
 
-          {/* Discovery hint — shown for first 1-2 activities */}
-          {activities.length >= 1 && activities.length <= 2 && (
+          {/* Discovery hint — first 1-2 activities */}
+          {visibleActivities.length >= 1 && visibleActivities.length <= 2 && (
             <div className="absolute bottom-16 inset-x-0 flex justify-center pointer-events-none z-10">
               <p className="text-slate-600 text-xs bg-slate-950/80 px-3 py-1.5 rounded-full border border-slate-800">
                 Double-click a node to create a connected activity
               </p>
             </div>
           )}
+
+          {/* Mobile floating + button */}
+          <button
+            onClick={addActivity}
+            className="md:hidden absolute bottom-20 right-4 z-20 w-12 h-12 rounded-full bg-slate-700 hover:bg-slate-600 border border-slate-600 text-white text-2xl flex items-center justify-center shadow-lg transition-colors"
+            title="Add activity"
+          >
+            +
+          </button>
 
           <ReactFlow
             nodes={rfNodes}
@@ -428,33 +600,19 @@ function PlanGraphInner({ planId }: { planId: string }) {
             proOptions={{ hideAttribution: false }}
             colorMode="dark"
           >
-            <Background
-              variant={BackgroundVariant.Dots}
-              gap={20}
-              size={1}
-              color="#1e293b"
-            />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1e293b" />
             <Controls position="bottom-left" />
           </ReactFlow>
 
-          {/* Edge label modal — drag-to-connect */}
           {pendingConnection && (
-            <EdgeLabelModal
-              onConfirm={confirmEdge}
-              onCancel={() => setPendingConnection(null)}
-            />
+            <EdgeLabelModal onConfirm={confirmEdge} onCancel={() => setPendingConnection(null)} />
           )}
-
-          {/* Edge label modal — handle double-click */}
           {pendingHandleEdge && (
-            <EdgeLabelModal
-              onConfirm={confirmHandleEdge}
-              onCancel={() => setPendingHandleEdge(null)}
-            />
+            <EdgeLabelModal onConfirm={confirmHandleEdge} onCancel={() => setPendingHandleEdge(null)} />
           )}
         </div>
 
-        {/* Mobile backdrop — tap to close panel */}
+        {/* Mobile backdrop */}
         {selectedActivity && (
           <div
             className="fixed inset-0 bg-black/40 z-30 md:hidden"
@@ -474,17 +632,27 @@ function PlanGraphInner({ planId }: { planId: string }) {
           />
         )}
       </div>
+
+      {/* Undo toast */}
+      {pendingDeleteId && (
+        <UndoToast
+          activityName={pendingDeleteName}
+          onUndo={undoDelete}
+          onDismiss={dismissUndo}
+        />
+      )}
+
+      {/* Help modal */}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   )
 }
 
-// ─── Public export (wraps with provider) ─────────────────────────────────────
+// ─── Public export ────────────────────────────────────────────────────────────
 
 export default function PlanGraph() {
   const { id } = useParams<{ id: string }>()
-
   if (!id) return null
-
   return (
     <ReactFlowProvider>
       <PlanGraphInner planId={id} />

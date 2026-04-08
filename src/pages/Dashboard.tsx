@@ -3,9 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import type { Plan } from '@/types/database'
 
+type ActivityStats = {
+  total: number
+  active: number
+  evaluated: number
+  criteriaTotal: number
+  criteriaChecked: number
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [plans, setPlans] = useState<Plan[]>([])
+  const [stats, setStats] = useState<Record<string, ActivityStats>>({})
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -17,9 +26,38 @@ export default function Dashboard() {
       .from('plans')
       .select('*')
       .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        setPlans(data ?? [])
+      .then(async ({ data }) => {
+        const planList = data ?? []
+        setPlans(planList)
         setLoading(false)
+
+        if (planList.length === 0) return
+
+        const ids = planList.map(p => p.id)
+
+        const [activitiesRes, criteriaRes] = await Promise.all([
+          supabase.from('activities').select('plan_id, lifecycle_status').in('plan_id', ids),
+          supabase.from('acceptance_criteria').select('plan_id, is_checked').in('plan_id', ids),
+        ])
+
+        const map: Record<string, ActivityStats> = {}
+        for (const p of planList) {
+          map[p.id] = { total: 0, active: 0, evaluated: 0, criteriaTotal: 0, criteriaChecked: 0 }
+        }
+        for (const a of activitiesRes.data ?? []) {
+          const s = map[a.plan_id]
+          if (!s) continue
+          s.total++
+          if (a.lifecycle_status === 'active') s.active++
+          if (a.lifecycle_status === 'evaluated') s.evaluated++
+        }
+        for (const c of criteriaRes.data ?? []) {
+          const s = map[c.plan_id]
+          if (!s) continue
+          s.criteriaTotal++
+          if (c.is_checked) s.criteriaChecked++
+        }
+        setStats(map)
       })
   }, [])
 
@@ -39,12 +77,7 @@ export default function Dashboard() {
     })
 
     setCreating(false)
-
-    if (error) {
-      console.error(error)
-      return
-    }
-
+    if (error) { console.error(error); return }
     navigate(`/plans/${data as string}`)
   }
 
@@ -53,10 +86,7 @@ export default function Dashboard() {
       {/* Nav */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
         <h1 className="text-base font-semibold">InvestInsight</h1>
-        <button
-          onClick={handleSignOut}
-          className="text-sm text-slate-400 hover:text-white"
-        >
+        <button onClick={handleSignOut} className="text-sm text-slate-400 hover:text-white">
           Sign out
         </button>
       </header>
@@ -129,28 +159,61 @@ export default function Dashboard() {
             <div className="w-5 h-5 rounded-full border-2 border-slate-500 border-t-transparent animate-spin" />
           </div>
         ) : plans.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-700 py-12 text-center">
-            <p className="text-sm text-slate-500">No plans yet. Create your first plan above.</p>
+          <div className="rounded-lg border border-dashed border-slate-700 py-12 text-center space-y-2">
+            <p className="text-sm text-slate-400 font-medium">No plans yet</p>
+            <p className="text-xs text-slate-600">Create your first investment plan to get started.</p>
           </div>
         ) : (
           <ul className="space-y-2">
-            {plans.map(plan => (
-              <li key={plan.id}>
-                <button
-                  onClick={() => navigate(`/plans/${plan.id}`)}
-                  className="w-full text-left rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 px-4 py-3 flex items-center justify-between group"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-white group-hover:text-white">{plan.name}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {plan.currency} · {plan.status === 'archived' ? 'Archived' : 'Active'} ·{' '}
-                      {new Date(plan.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <span className="text-slate-600 group-hover:text-slate-400 text-sm">→</span>
-                </button>
-              </li>
-            ))}
+            {plans.map(plan => {
+              const s = stats[plan.id]
+              const criteriaProgress = s && s.criteriaTotal > 0
+                ? Math.round((s.criteriaChecked / s.criteriaTotal) * 100)
+                : null
+
+              return (
+                <li key={plan.id}>
+                  <button
+                    onClick={() => navigate(`/plans/${plan.id}`)}
+                    className="w-full text-left rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 px-4 py-3.5 flex items-start justify-between gap-4 group transition-colors"
+                  >
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-white truncate">{plan.name}</p>
+                        {plan.status === 'archived' && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 flex-shrink-0">archived</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {plan.currency} · {new Date(plan.created_at).toLocaleDateString()}
+                        {s && s.total > 0 && (
+                          <> · <span className="text-slate-400">{s.total} {s.total === 1 ? 'activity' : 'activities'}</span>
+                          {s.active > 0 && <span className="text-blue-400"> · {s.active} active</span>}
+                          {s.evaluated > 0 && <span className="text-amber-400"> · {s.evaluated} eval'd</span>}
+                          </>
+                        )}
+                      </p>
+
+                      {/* Criteria progress bar */}
+                      {criteriaProgress !== null && (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden max-w-32">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${criteriaProgress === 100 ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                              style={{ width: `${criteriaProgress}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-slate-500 tabular-nums">
+                            {s!.criteriaChecked}/{s!.criteriaTotal} criteria
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-slate-600 group-hover:text-slate-400 text-sm mt-0.5 flex-shrink-0 transition-colors">→</span>
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </main>

@@ -89,5 +89,5 @@ export function usePlan(planId: string) {
     return () => { supabase.removeChannel(channel) }
   }, [planId])
 
-  return { plan, activities, edges, criteria, loading, error }
+  return { plan, setPlan, activities, edges, criteria, loading, error }
 }

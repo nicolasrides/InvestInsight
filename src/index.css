@@ -19,3 +19,12 @@
 .animate-badge-pop {
   animation: badge-pop 0.3s ease-out forwards;
 }
+
+@keyframes countdown {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+.animate-countdown {
+  animation: countdown 5s linear forwards;
+}
