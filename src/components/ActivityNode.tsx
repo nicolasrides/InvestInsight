@@ -37,12 +37,12 @@ const handleStyle = {
 
 function fmt(value: number | null, currency: string, isTime: boolean): string {
   if (value == null) return '—'
-  if (isTime) return `${value}h`
+  if (isTime) return `${value}d`
   return value.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' ' + currency
 }
 
 function fmtShort(value: number, currency: string, isTime: boolean): string {
-  if (isTime) return `${value}h`
+  if (isTime) return `${value}d`
   if (value >= 1_000_000) return (value / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M ' + currency
   if (value >= 1_000) return (value / 1_000).toFixed(1).replace(/\.0$/, '') + 'k ' + currency
   return value.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' ' + currency
@@ -67,6 +67,22 @@ function PencilIcon() {
     >
       <path d="M7 1.5l1.5 1.5L3 8.5H1.5V7L7 1.5z" stroke="#64748b" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  )
+}
+
+function Checkbox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`inline-flex flex-shrink-0 w-3.5 h-3.5 rounded-sm border items-center justify-center transition-colors duration-150 ${
+        checked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600 bg-transparent'
+      }`}
+    >
+      {checked && (
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+          <path d="M1.5 4L3 5.5L6.5 2" stroke="white" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+    </span>
   )
 }
 
@@ -110,13 +126,14 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
     e.stopPropagation()
   }
 
-  // Compact summary for collapsed metrics
-  const collapsedParts: string[] = []
+  // Collapsed metric chips: icon + value, color-coded by type
+  const collapsedChips: { sym: string; val: string; color: string }[] = []
+  if (activity.time_planned != null)
+    collapsedChips.push({ sym: '⏱', val: fmtShort(activity.time_planned, currency, true), color: 'text-slate-400' })
   if (activity.investment_planned != null)
-    collapsedParts.push(`I: ${fmtShort(activity.investment_planned, currency, false)}`)
+    collapsedChips.push({ sym: '↓', val: fmtShort(activity.investment_planned, currency, false), color: 'text-amber-400' })
   if (activity.return_planned != null)
-    collapsedParts.push(`R: ${fmtShort(activity.return_planned, currency, false)}`)
-  const collapsedSummary = collapsedParts.length > 0 ? collapsedParts.join(' · ') : '—'
+    collapsedChips.push({ sym: '↑', val: fmtShort(activity.return_planned, currency, false), color: 'text-emerald-400' })
 
   return (
     <div
@@ -172,34 +189,43 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
         {/* ── Metrics section ── */}
         {hasMetrics && (
           <div className="border-t border-slate-700 pt-2">
-            {/* Section header (always visible) */}
-            <div className="flex items-center gap-1.5 mb-1">
+            {/* Section header */}
+            <div className="flex items-center gap-1.5">
               <Chevron open={expanded} />
               <span className="text-slate-400 font-semibold uppercase tracking-wider" style={{ fontSize: '10px' }}>Metrics</span>
-              {!expanded && (
-                <span className="text-xs text-slate-500 ml-auto tabular-nums">{collapsedSummary}</span>
-              )}
             </div>
+
+            {/* Collapsed chips row */}
+            {!expanded && collapsedChips.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                {collapsedChips.map((chip, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 text-xs tabular-nums">
+                    <span className={`${chip.color} font-medium`}>{chip.sym}</span>
+                    <span className="text-slate-400">{chip.val}</span>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {/* Expanded table */}
             {expanded && (
-              <table className="w-full text-xs">
+              <table className="w-full mt-1.5 text-xs">
                 <thead>
                   <tr>
-                    <th className="text-left text-slate-600 font-normal pb-1 w-14"></th>
-                    <th className="text-right text-slate-500 font-medium pb-1 pr-3">Plan</th>
-                    <th className="text-right text-slate-500 font-medium pb-1">Actual</th>
+                    <th className="text-left font-normal pb-1.5 w-20"></th>
+                    <th className="text-right text-slate-500 font-medium pb-1.5 pr-3">Plan</th>
+                    <th className="text-right text-slate-500 font-medium pb-1.5">Actual</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(activity.time_planned != null || activity.time_actual != null) && (
-                    <MetricRow label="Time" planned={activity.time_planned} actual={activity.time_actual} currency={currency} isTime higherIsBetter={false} />
+                    <MetricRow label="Time" dot="bg-slate-500" planned={activity.time_planned} actual={activity.time_actual} currency={currency} isTime higherIsBetter={false} />
                   )}
                   {(activity.investment_planned != null || activity.investment_actual != null) && (
-                    <MetricRow label="Invest" planned={activity.investment_planned} actual={activity.investment_actual} currency={currency} higherIsBetter={false} />
+                    <MetricRow label="Invest" dot="bg-amber-500" planned={activity.investment_planned} actual={activity.investment_actual} currency={currency} higherIsBetter={false} />
                   )}
                   {(activity.return_planned != null || activity.return_actual != null) && (
-                    <MetricRow label="Return" planned={activity.return_planned} actual={activity.return_actual} currency={currency} higherIsBetter />
+                    <MetricRow label="Return" dot="bg-emerald-500" planned={activity.return_planned} actual={activity.return_actual} currency={currency} higherIsBetter />
                   )}
                 </tbody>
               </table>
@@ -210,7 +236,7 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
         {/* ── Acceptance Criteria section ── */}
         {criteria.length > 0 && (
           <div className="border-t border-slate-700 pt-2">
-            {/* Section header (always visible) */}
+            {/* Section header */}
             <div className="flex items-center gap-1.5">
               <Chevron open={expanded} />
               <span className="text-slate-400 font-semibold uppercase tracking-wider" style={{ fontSize: '10px' }}>Criteria</span>
@@ -218,15 +244,19 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
                 {allCriteriaMet ? (
                   <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900 text-emerald-300 font-medium">✓ All met</span>
                 ) : (
-                  <span className="text-xs text-slate-500 tabular-nums">{checkedCount}/{criteria.length}</span>
+                  <span className="text-xs tabular-nums text-slate-500">
+                    <span className="text-slate-300 font-medium">{checkedCount}</span>
+                    <span className="mx-0.5">/</span>
+                    {criteria.length}
+                  </span>
                 )}
               </div>
             </div>
 
             {/* Progress bar */}
-            <div className="mt-1.5 h-1.5 rounded-full bg-slate-700 overflow-hidden">
+            <div className="mt-1.5 h-1 rounded-full bg-slate-700 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${allCriteriaMet ? 'bg-emerald-500' : 'bg-blue-600'}`}
+                className={`h-full rounded-full transition-all duration-500 ${allCriteriaMet ? 'bg-emerald-500' : 'bg-blue-500'}`}
                 style={{ width: `${Math.round((checkedCount / criteria.length) * 100)}%` }}
               />
             </div>
@@ -236,10 +266,10 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
               <ul className="mt-2 space-y-1.5">
                 {criteria.map(c => (
                   <li key={c.id} className="flex items-start gap-2">
-                    <span className={`mt-0.5 flex-shrink-0 text-xs leading-none ${c.is_checked ? 'text-emerald-400' : 'text-slate-600'}`}>
-                      {c.is_checked ? '✓' : '·'}
+                    <span className="mt-0.5">
+                      <Checkbox checked={c.is_checked} />
                     </span>
-                    <span className={`text-xs leading-snug ${c.is_checked ? 'line-through text-slate-500' : 'text-slate-300'}`}>
+                    <span className={`text-xs leading-snug ${c.is_checked ? 'line-through text-slate-600' : 'text-slate-300'}`}>
                       {c.text}
                     </span>
                   </li>
@@ -257,6 +287,7 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
 
 type MetricRowProps = {
   label: string
+  dot: string
   planned: number | null
   actual: number | null
   currency: string
@@ -264,24 +295,37 @@ type MetricRowProps = {
   higherIsBetter?: boolean
 }
 
-function MetricRow({ label, planned, actual, currency, isTime = false, higherIsBetter = false }: MetricRowProps) {
+function MetricRow({ label, dot, planned, actual, currency, isTime = false, higherIsBetter = false }: MetricRowProps) {
   let actualColor = 'text-slate-400'
+  let varianceBg = ''
   let variance: string | null = null
 
   if (actual != null && planned != null && planned !== 0) {
     const better = higherIsBetter ? actual >= planned : actual <= planned
     actualColor = better ? 'text-emerald-400' : 'text-red-400'
+    varianceBg = better ? 'bg-emerald-900/60 text-emerald-400' : 'bg-red-900/60 text-red-400'
     const pct = Math.round(((actual - planned) / planned) * 100)
     if (pct !== 0) variance = `${pct > 0 ? '+' : ''}${pct}%`
   }
 
   return (
     <tr>
-      <td className="text-slate-500 pr-2 py-0.5 text-left whitespace-nowrap">{label}</td>
+      <td className="pr-2 py-0.5 text-left whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
+          <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+          <span className="text-slate-500">{label}</span>
+        </div>
+      </td>
       <td className="text-slate-400 pr-3 py-0.5 text-right tabular-nums">{fmt(planned, currency, isTime)}</td>
       <td className={`py-0.5 text-right tabular-nums ${actualColor}`}>
-        {fmt(actual, currency, isTime)}
-        {variance && <span className="ml-1 opacity-60" style={{ fontSize: '10px' }}>{variance}</span>}
+        <div className="inline-flex items-center justify-end gap-1">
+          <span>{fmt(actual, currency, isTime)}</span>
+          {variance && (
+            <span className={`rounded px-1 py-px tabular-nums leading-none font-medium ${varianceBg}`} style={{ fontSize: '9px' }}>
+              {variance}
+            </span>
+          )}
+        </div>
       </td>
     </tr>
   )

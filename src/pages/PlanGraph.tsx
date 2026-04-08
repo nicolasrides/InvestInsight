@@ -32,7 +32,7 @@ const nodeTypes = { activity: ActivityNode }
 
 function PlanGraphInner({ planId }: { planId: string }) {
   const navigate = useNavigate()
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
 
   const { plan, activities, edges: dbEdges, criteria, loading, error } = usePlan(planId)
   const [nodesExpanded, setNodesExpanded] = useState(false)
@@ -227,6 +227,12 @@ function PlanGraphInner({ planId }: { planId: string }) {
     await supabase.from('activities').update(updates).eq('id', id)
   }
 
+  async function deleteActivity(id: string) {
+    setSelectedActivityId(null)
+    setRfNodes(prev => prev.filter(n => n.id !== id))
+    await supabase.from('activities').delete().eq('id', id)
+  }
+
   function renameActivity(id: string, name: string) {
     supabase.from('activities').update({ name }).eq('id', id)
   }
@@ -282,6 +288,29 @@ function PlanGraphInner({ planId }: { planId: string }) {
     }
   }, [])
 
+  async function layoutHorizontal() {
+    const NODE_WIDTH = 256
+    const GAP = 52
+    const STEP = NODE_WIDTH + GAP
+
+    const sorted = [...rfNodes].sort((a, b) => a.position.x - b.position.x)
+    const updated = sorted.map((node, i) => ({
+      ...node,
+      position: { x: i * STEP, y: 0 },
+    }))
+
+    setRfNodes(updated)
+
+    for (const node of updated) {
+      supabase
+        .from('activities')
+        .update({ position_x: Math.round(node.position.x), position_y: 0 })
+        .eq('id', node.id)
+    }
+
+    setTimeout(() => fitView({ padding: 0.25, duration: 400 }), 50)
+  }
+
   async function deleteEdge(edgeId: string) {
     await supabase.from('activity_edges').delete().eq('id', edgeId)
   }
@@ -322,6 +351,18 @@ function PlanGraphInner({ planId }: { planId: string }) {
           <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">Archived</span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={layoutHorizontal}
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
+            title="Arrange all activities in a horizontal row"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="flex-shrink-0">
+              <rect x="1" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
+              <rect x="5.5" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
+              <rect x="10" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
+            </svg>
+            Layout
+          </button>
           <button
             onClick={() => setNodesExpanded(v => !v)}
             className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-slate-300"
@@ -393,6 +434,7 @@ function PlanGraphInner({ planId }: { planId: string }) {
             currency={plan.currency}
             onClose={() => setSelectedActivityId(null)}
             onSave={updates => saveActivity(selectedActivity.id, updates)}
+            onDelete={() => deleteActivity(selectedActivity.id)}
           />
         )}
       </div>

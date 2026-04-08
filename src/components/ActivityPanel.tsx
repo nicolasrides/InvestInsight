@@ -7,6 +7,7 @@ interface Props {
   currency: string
   onClose: () => void
   onSave: (updates: Partial<Activity>) => Promise<void>
+  onDelete: () => void
 }
 
 function variance(planned: number | null, actual: number | null): string | null {
@@ -24,7 +25,7 @@ function varianceColor(planned: number | null, actual: number | null, inverseGoo
   return overIsGood ? 'text-emerald-400' : 'text-red-400'
 }
 
-export default function ActivityPanel({ activity, currency, onClose, onSave }: Props) {
+export default function ActivityPanel({ activity, currency, onClose, onSave, onDelete }: Props) {
   // ── Activity fields ────────────────────────────────────────
   const [name, setName] = useState(activity.name)
   const [timePlanned, setTimePlanned] = useState(activity.time_planned?.toString() ?? '')
@@ -157,13 +158,25 @@ export default function ActivityPanel({ activity, currency, onClose, onSave }: P
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
         <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Activity</span>
-        <button
-          onClick={onClose}
-          className="text-slate-500 hover:text-slate-300 text-lg leading-none"
-          aria-label="Close panel"
-        >
-          ×
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onDelete}
+            className="text-slate-600 hover:text-red-400 transition-colors"
+            aria-label="Delete activity"
+            title="Delete activity"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M2 3.5h10M5.5 3.5V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5v1M6 6v4M8 6v4M3 3.5l.7 7a.5.5 0 00.5.5h5.6a.5.5 0 00.5-.5l.7-7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            onClick={onClose}
+            className="text-slate-500 hover:text-slate-300 text-lg leading-none"
+            aria-label="Close panel"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       {/* Scrollable body */}
