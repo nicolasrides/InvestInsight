@@ -10,6 +10,7 @@ export type ActivityNodeData = {
   criteria: AcceptanceCriterion[]
   expanded: boolean
   onRename: (id: string, name: string) => void
+  onToggleExpand: (id: string) => void
 }
 
 export type ActivityNodeType = Node<ActivityNodeData, 'activity'>
@@ -87,7 +88,7 @@ function Checkbox({ checked }: { checked: boolean }) {
 }
 
 export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeType>) {
-  const { activity, graphState, currency, criteria, expanded, onRename } = data
+  const { activity, graphState, currency, criteria, expanded, onRename, onToggleExpand } = data
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(activity.name)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -140,7 +141,7 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
       className={`
         group rounded-lg border min-w-56 max-w-72 px-3.5 py-3 select-none transition-opacity
         ${containerStyles[graphState]}
-        ${selected ? 'ring-2 ring-slate-300 ring-offset-1 ring-offset-slate-950' : ''}
+        ${selected ? 'ring-2 ring-slate-300 ring-offset-1 ring-offset-slate-950 shadow-xl shadow-slate-200/10' : ''}
       `}
     >
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -190,10 +191,13 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
         {hasMetrics && (
           <div className="border-t border-slate-700 pt-2">
             {/* Section header */}
-            <div className="flex items-center gap-1.5">
+            <button
+              className="flex items-center gap-1.5 hover:opacity-75 transition-opacity w-full"
+              onClick={() => onToggleExpand(activity.id)}
+            >
               <Chevron open={expanded} />
               <span className="text-slate-400 font-semibold uppercase tracking-wider" style={{ fontSize: '10px' }}>Metrics</span>
-            </div>
+            </button>
 
             {/* Collapsed chips row */}
             {!expanded && collapsedChips.length > 0 && (
@@ -238,8 +242,13 @@ export default function ActivityNode({ data, selected }: NodeProps<ActivityNodeT
           <div className="border-t border-slate-700 pt-2">
             {/* Section header */}
             <div className="flex items-center gap-1.5">
-              <Chevron open={expanded} />
-              <span className="text-slate-400 font-semibold uppercase tracking-wider" style={{ fontSize: '10px' }}>Criteria</span>
+              <button
+                className="flex items-center gap-1.5 hover:opacity-75 transition-opacity"
+                onClick={() => onToggleExpand(activity.id)}
+              >
+                <Chevron open={expanded} />
+                <span className="text-slate-400 font-semibold uppercase tracking-wider" style={{ fontSize: '10px' }}>Criteria</span>
+              </button>
               <div className="ml-auto flex items-center gap-1.5">
                 {allCriteriaMet ? (
                   <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900 text-emerald-300 font-medium">✓ All met</span>

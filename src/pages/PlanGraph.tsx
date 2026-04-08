@@ -24,9 +24,11 @@ import ActivityNode from '@/components/ActivityNode'
 import type { ActivityNodeType } from '@/components/ActivityNode'
 import ActivityPanel from '@/components/ActivityPanel'
 import EdgeLabelModal from '@/components/EdgeLabelModal'
+import CustomEdge from '@/components/CustomEdge'
 import type { Activity } from '@/types/database'
 
 const nodeTypes = { activity: ActivityNode }
+const edgeTypes = { custom: CustomEdge }
 
 // ─── Inner component (needs ReactFlowProvider above it) ───────────────────────
 
@@ -35,14 +37,12 @@ function PlanGraphInner({ planId }: { planId: string }) {
   const { screenToFlowPosition, fitView } = useReactFlow()
 
   const { plan, activities, edges: dbEdges, criteria, loading, error } = usePlan(planId)
-  const [nodesExpanded, setNodesExpanded] = useState(false)
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<ActivityNodeType>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([])
 
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null)
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(null)
-  // For handle double-click: activity already created, waiting for edge label
   const [pendingHandleEdge, setPendingHandleEdge] = useState<{ fromId: string; toId: string } | null>(null)
 
   const graphStates = useMemo(
@@ -60,10 +60,26 @@ function PlanGraphInner({ planId }: { planId: string }) {
     return map
   }, [criteria])
 
-  // Sync DB activities → RF nodes.
-  // For existing nodes: only update data (name, status, etc.) — never touch position.
-  // Position is managed by React Flow during drag and saved explicitly on drag-stop.
-  // For new nodes (added by this user or a collaborator): use the DB position.
+  // ── Stable callbacks ─────────────────────────────────────────────────────────
+
+  const renameActivity = useCallback((id: string, name: string) => {
+    supabase.from('activities').update({ name }).eq('id', id)
+  }, [])
+
+  const toggleNodeExpand = useCallback((id: string) => {
+    setRfNodes(prev => prev.map(n =>
+      n.id === id ? { ...n, data: { ...n.data, expanded: !n.data.expanded } } : n,
+    ))
+  }, [])
+
+  const deleteEdge = useCallback(async (edgeId: string) => {
+    setRfEdges(prev => prev.filter(e => e.id !== edgeId))
+    await supabase.from('activity_edges').delete().eq('id', edgeId)
+  }, [])
+
+  // ── Sync DB activities → RF nodes ────────────────────────────────────────────
+  // For existing nodes: only update data, never touch position or expand state.
+  // For new nodes: use DB position, start collapsed.
   useEffect(() => {
     if (!plan) return
     setRfNodes(prev => {
@@ -77,8 +93,9 @@ function PlanGraphInner({ planId }: { planId: string }) {
           graphState,
           currency: plan.currency,
           criteria: criteriaByActivity.get(a.id) ?? [],
-          expanded: nodesExpanded,
+          expanded: existing ? existing.data.expanded : false,
           onRename: renameActivity,
+          onToggleExpand: toggleNodeExpand,
         }
 
         if (existing) {
@@ -95,44 +112,36 @@ function PlanGraphInner({ planId }: { planId: string }) {
         }
       })
     })
-  }, [activities, graphStates, criteriaByActivity])
+  }, [activities, graphStates, criteriaByActivity, plan, renameActivity, toggleNodeExpand])
 
-  // Patch expanded flag without rebuilding the full node array —
-  // a full rebuild causes React Flow to fire onNodeDoubleClick on new nodes.
-  useEffect(() => {
-    setRfNodes(prev => prev.map(n => ({
-      ...n,
-      data: { ...n.data, expanded: nodesExpanded },
-    })))
-  }, [nodesExpanded])
-
-  // Sync DB edges → RF edges
+  // ── Sync DB edges → RF edges ─────────────────────────────────────────────────
   useEffect(() => {
     setRfEdges(
       dbEdges.map(e => ({
         id: e.id,
+        type: 'custom',
         source: e.from_activity_id,
         target: e.to_activity_id,
-        label: e.condition_label,
-        labelStyle: { fill: '#94a3b8', fontSize: 11 },
-        labelBgStyle: { fill: '#0f172a' },
+        label: e.condition_label ?? '',
         style: { stroke: '#475569' },
-        data: { edge: e },
+        data: { edge: e, onDelete: deleteEdge },
       })),
     )
-  }, [dbEdges])
+  }, [dbEdges, deleteEdge])
 
-  // Close panel if selected activity was deleted
+  // ── Close panel if selected activity was deleted ──────────────────────────────
   useEffect(() => {
     if (selectedActivityId && !activities.find(a => a.id === selectedActivityId)) {
       setSelectedActivityId(null)
     }
   }, [activities, selectedActivityId])
 
-  // ── Interactions ────────────────────────────────────────────────────────────
+  // ── Computed ─────────────────────────────────────────────────────────────────
+  const allExpanded = rfNodes.length > 0 && rfNodes.every(n => n.data.expanded)
+
+  // ── Interactions ─────────────────────────────────────────────────────────────
 
   async function addActivity() {
-    // Offset each new node vertically so they don't stack on top of each other
     const position = screenToFlowPosition({
       x: window.innerWidth / 2 - 100,
       y: window.innerHeight / 2 - 40 + activities.length * 80,
@@ -201,15 +210,14 @@ function PlanGraphInner({ planId }: { planId: string }) {
       .single()
 
     if (!error && data) {
-      // Optimistically add to RF edges; realtime will confirm
       setRfEdges(prev => addEdge({
         id: data.id,
+        type: 'custom',
         source,
         target,
         label,
-        labelStyle: { fill: '#94a3b8', fontSize: 11 },
-        labelBgStyle: { fill: '#0f172a' },
         style: { stroke: '#475569' },
+        data: { onDelete: deleteEdge },
       }, prev))
     }
 
@@ -233,18 +241,13 @@ function PlanGraphInner({ planId }: { planId: string }) {
     await supabase.from('activities').delete().eq('id', id)
   }
 
-  function renameActivity(id: string, name: string) {
-    supabase.from('activities').update({ name }).eq('id', id)
-  }
-
   const creatingFromHandle = useRef(false)
 
   const onNodeDoubleClick: NodeMouseHandler = useCallback((e, node) => {
     if (creatingFromHandle.current) return
 
-    // Ignore double-clicks on the name text / inline input (handled by inline edit)
     const target = e.target as HTMLElement
-    if (target.tagName === 'P' || target.tagName === 'INPUT') return
+    if (target.tagName === 'P' || target.tagName === 'INPUT' || target.tagName === 'BUTTON') return
 
     const nodeEl = (e.target as HTMLElement).closest('.react-flow__node') as HTMLElement | null
     if (!nodeEl) return
@@ -288,6 +291,14 @@ function PlanGraphInner({ planId }: { planId: string }) {
     }
   }, [])
 
+  function toggleAllNodes() {
+    const next = !allExpanded
+    setRfNodes(prev => prev.map(n => ({
+      ...n,
+      data: { ...n.data, expanded: next },
+    })))
+  }
+
   async function layoutHorizontal() {
     const NODE_WIDTH = 256
     const GAP = 52
@@ -311,13 +322,9 @@ function PlanGraphInner({ planId }: { planId: string }) {
     setTimeout(() => fitView({ padding: 0.25, duration: 400 }), 50)
   }
 
-  async function deleteEdge(edgeId: string) {
-    await supabase.from('activity_edges').delete().eq('id', edgeId)
-  }
-
   const selectedActivity = activities.find(a => a.id === selectedActivityId) ?? null
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -341,19 +348,19 @@ function PlanGraphInner({ planId }: { planId: string }) {
       <header className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 flex-shrink-0">
         <button
           onClick={() => navigate('/')}
-          className="text-slate-400 hover:text-white text-sm"
+          className="text-slate-400 hover:text-white text-sm px-2 py-1 -mx-2 rounded hover:bg-slate-800 transition-colors flex-shrink-0"
         >
-          ← Plans
+          ← <span className="hidden sm:inline">Plans</span>
         </button>
-        <span className="text-slate-700">|</span>
-        <h1 className="text-sm font-medium text-white">{plan.name}</h1>
+        <span className="text-slate-700 flex-shrink-0">|</span>
+        <h1 className="text-sm font-medium text-white truncate">{plan.name}</h1>
         {plan.status === 'archived' && (
-          <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">Archived</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 flex-shrink-0">Archived</span>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           <button
             onClick={layoutHorizontal}
-            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
             title="Arrange all activities in a horizontal row"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="flex-shrink-0">
@@ -361,20 +368,22 @@ function PlanGraphInner({ planId }: { planId: string }) {
               <rect x="5.5" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
               <rect x="10" y="4" width="3" height="6" rx="0.75" fill="currentColor" opacity="0.7" />
             </svg>
-            Layout
+            <span className="hidden sm:inline">Layout</span>
           </button>
           <button
-            onClick={() => setNodesExpanded(v => !v)}
-            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-slate-300"
-            title={nodesExpanded ? 'Collapse node details' : 'Expand node details'}
+            onClick={toggleAllNodes}
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-slate-300 flex items-center gap-1.5"
+            title={allExpanded ? 'Collapse all nodes' : 'Expand all nodes'}
           >
-            {nodesExpanded ? '⊟ Collapse' : '⊞ Expand'}
+            <span>{allExpanded ? '⊟' : '⊞'}</span>
+            <span className="hidden sm:inline">{allExpanded ? 'Collapse' : 'Expand'}</span>
           </button>
           <button
             onClick={addActivity}
-            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm text-white"
+            className="rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1.5 text-sm text-white flex items-center gap-1"
           >
-            + Add activity
+            <span>+</span>
+            <span className="hidden sm:inline"> Add activity</span>
           </button>
         </div>
       </header>
@@ -382,10 +391,30 @@ function PlanGraphInner({ planId }: { planId: string }) {
       {/* Canvas + panel */}
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
+          {/* Empty state */}
+          {activities.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div className="text-center space-y-1.5">
+                <p className="text-slate-500 text-sm font-medium">No activities yet</p>
+                <p className="text-slate-600 text-xs">Tap "+ Add activity" to get started</p>
+              </div>
+            </div>
+          )}
+
+          {/* Discovery hint — shown for first 1-2 activities */}
+          {activities.length >= 1 && activities.length <= 2 && (
+            <div className="absolute bottom-16 inset-x-0 flex justify-center pointer-events-none z-10">
+              <p className="text-slate-600 text-xs bg-slate-950/80 px-3 py-1.5 rounded-full border border-slate-800">
+                Double-click a node to create a connected activity
+              </p>
+            </div>
+          )}
+
           <ReactFlow
             nodes={rfNodes}
             edges={rfEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -393,7 +422,6 @@ function PlanGraphInner({ planId }: { planId: string }) {
             onNodeDoubleClick={onNodeDoubleClick}
             onNodeDragStop={onNodeDragStop}
             onNodesDelete={onNodesDelete}
-            onEdgeClick={(_e, edge) => deleteEdge(edge.id)}
             onPaneClick={() => setSelectedActivityId(null)}
             fitView
             fitViewOptions={{ padding: 0.3 }}
@@ -425,6 +453,14 @@ function PlanGraphInner({ planId }: { planId: string }) {
             />
           )}
         </div>
+
+        {/* Mobile backdrop — tap to close panel */}
+        {selectedActivity && (
+          <div
+            className="fixed inset-0 bg-black/40 z-30 md:hidden"
+            onClick={() => setSelectedActivityId(null)}
+          />
+        )}
 
         {/* Activity panel */}
         {selectedActivity && (

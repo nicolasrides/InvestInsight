@@ -25,6 +25,8 @@ function varianceColor(planned: number | null, actual: number | null, inverseGoo
   return overIsGood ? 'text-emerald-400' : 'text-red-400'
 }
 
+const LIFECYCLE_OPTIONS: Activity['lifecycle_status'][] = ['created', 'active', 'evaluated', 'archived']
+
 export default function ActivityPanel({ activity, currency, onClose, onSave, onDelete }: Props) {
   // ── Activity fields ────────────────────────────────────────
   const [name, setName] = useState(activity.name)
@@ -36,6 +38,8 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
   const [returnActual, setReturnActual] = useState(activity.return_actual?.toString() ?? '')
   const [outcomeStatus, setOutcomeStatus] = useState(activity.outcome_status ?? '')
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // ── Acceptance criteria ────────────────────────────────────
   const [criteria, setCriteria] = useState<AcceptanceCriterion[]>([])
@@ -44,7 +48,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
   const [criteriaError, setCriteriaError] = useState<string | null>(null)
   const newInputRef = useRef<HTMLInputElement>(null)
 
-  // Animation: fire when all criteria become checked
   const criteriaRef = useRef<HTMLDivElement>(null)
   const prevAllChecked = useRef(false)
   const allChecked = criteria.length > 0 && criteria.every(c => c.is_checked)
@@ -57,7 +60,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
       const el = criteriaRef.current
       if (el) {
         el.classList.remove('animate-criteria-complete')
-        // Force reflow so the animation restarts
         void el.offsetWidth
         el.classList.add('animate-criteria-complete')
       }
@@ -65,7 +67,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
     prevAllChecked.current = allChecked
   }, [allChecked])
 
-  // Fetch criteria on mount
   useEffect(() => {
     supabase
       .from('acceptance_criteria')
@@ -74,7 +75,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
       .order('sort_order')
       .then(({ data }) => setCriteria(data ?? []))
 
-    // Realtime subscription
     const channel = supabase
       .channel(`criteria-${activity.id}`)
       .on(
@@ -141,7 +141,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
     setCriteria(prev => prev.filter(c => c.id !== id))
   }
 
-  // ── Activity save helpers ──────────────────────────────────
   function toNum(val: string): number | null {
     const n = parseFloat(val)
     return isNaN(n) ? null : n
@@ -149,29 +148,78 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
 
   async function save(updates: Partial<Activity>) {
     setSaving(true)
+    setSaved(false)
     await onSave(updates)
     setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   return (
-    <aside className="w-80 flex-shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden">
+    <aside className="
+      fixed bottom-0 inset-x-0 z-40
+      bg-slate-950 border-t border-slate-800
+      rounded-t-2xl max-h-[85vh]
+      flex flex-col
+      md:relative md:inset-auto md:bottom-auto
+      md:w-80 md:flex-shrink-0
+      md:border-l md:border-t-0
+      md:rounded-none md:max-h-full
+    ">
+      {/* Drag handle — mobile only */}
+      <div className="flex justify-center pt-2.5 pb-1 md:hidden flex-shrink-0">
+        <div className="w-8 h-1 rounded-full bg-slate-700" />
+      </div>
+
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Activity</span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onDelete}
-            className="text-slate-600 hover:text-red-400 transition-colors"
-            aria-label="Delete activity"
-            title="Delete activity"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M2 3.5h10M5.5 3.5V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5v1M6 6v4M8 6v4M3 3.5l.7 7a.5.5 0 00.5.5h5.6a.5.5 0 00.5-.5l.7-7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+      <div className="flex items-start gap-3 px-4 py-3 border-b border-slate-800 flex-shrink-0">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Activity</p>
+          <p className="text-sm font-semibold text-white truncate mt-0.5">{activity.name}</p>
+        </div>
+        <div className="flex items-center gap-2 pt-1 flex-shrink-0">
+          {/* Save status dot */}
+          {saving && (
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse flex-shrink-0" title="Saving…" />
+          )}
+          {saved && !saving && (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" title="Saved" />
+          )}
+
+          {/* Delete — two-step confirmation */}
+          {confirmingDelete ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-red-400 font-medium whitespace-nowrap">Delete?</span>
+              <button
+                onClick={() => { setConfirmingDelete(false); onDelete() }}
+                className="text-xs font-medium text-white bg-red-700 hover:bg-red-600 px-2 py-0.5 rounded transition-colors"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => setConfirmingDelete(false)}
+                className="text-xs text-slate-400 hover:text-slate-300"
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className="text-slate-600 hover:text-red-400 transition-colors p-0.5 rounded"
+              aria-label="Delete activity"
+              title="Delete activity"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 3.5h10M5.5 3.5V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5v1M6 6v4M8 6v4M3 3.5l.7 7a.5.5 0 00.5.5h5.6a.5.5 0 00.5-.5l.7-7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+
+          {/* Close */}
           <button
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-300 text-lg leading-none"
+            className="text-slate-500 hover:text-slate-300 text-lg leading-none p-0.5"
             aria-label="Close panel"
           >
             ×
@@ -194,19 +242,24 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
           />
         </div>
 
-        {/* Lifecycle status */}
-        <div className="space-y-1">
+        {/* Lifecycle status — segmented buttons */}
+        <div className="space-y-1.5">
           <label className="block text-xs text-slate-400">Status</label>
-          <select
-            value={activity.lifecycle_status}
-            onChange={e => save({ lifecycle_status: e.target.value as Activity['lifecycle_status'] })}
-            className="w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-slate-500"
-          >
-            <option value="created">Created</option>
-            <option value="active">Active</option>
-            <option value="evaluated">Evaluated</option>
-            <option value="archived">Archived</option>
-          </select>
+          <div className="grid grid-cols-2 gap-1.5">
+            {LIFECYCLE_OPTIONS.map(opt => (
+              <button
+                key={opt}
+                onClick={() => save({ lifecycle_status: opt })}
+                className={`py-2 rounded-md text-xs font-medium capitalize transition-colors ${
+                  activity.lifecycle_status === opt
+                    ? 'bg-slate-500 text-white'
+                    : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-300'
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Outcome status — only when evaluated */}
@@ -235,7 +288,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
 
         {/* ── Acceptance Criteria ── */}
         <div ref={criteriaRef} className="space-y-3 rounded-lg p-1 -m-1">
-          {/* Section header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -254,19 +306,15 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
             )}
           </div>
 
-          {/* Progress bar */}
           {criteria.length > 0 && (
             <div className="h-1 rounded-full bg-slate-800 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  allChecked ? 'bg-emerald-500' : 'bg-slate-500'
-                }`}
+                className={`h-full rounded-full transition-all duration-500 ${allChecked ? 'bg-emerald-500' : 'bg-slate-500'}`}
                 style={{ width: `${progress}%` }}
               />
             </div>
           )}
 
-          {/* Criteria list */}
           {criteria.length === 0 && (
             <p className="text-xs text-slate-600">No criteria yet.</p>
           )}
@@ -280,16 +328,13 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
                   onChange={e => toggleCriterion(c.id, e.target.checked)}
                   className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 rounded accent-emerald-500 cursor-pointer"
                 />
-                <span
-                  className={`flex-1 text-xs leading-snug ${
-                    c.is_checked ? 'line-through text-slate-500' : 'text-slate-300'
-                  }`}
-                >
+                <span className={`flex-1 text-xs leading-snug ${c.is_checked ? 'line-through text-slate-500' : 'text-slate-300'}`}>
                   {c.text}
                 </span>
+                {/* Always visible on mobile, hover-only on desktop */}
                 <button
                   onClick={() => deleteCriterion(c.id)}
-                  className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 text-sm leading-none flex-shrink-0 transition-opacity"
+                  className="text-slate-600 hover:text-red-400 text-sm leading-none flex-shrink-0 transition-colors md:opacity-0 md:group-hover:opacity-100"
                   aria-label="Delete criterion"
                 >
                   ×
@@ -298,11 +343,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
             ))}
           </ul>
 
-          {/* Add criterion input */}
-          <form
-            onSubmit={e => { e.preventDefault(); addCriterion() }}
-            className="flex gap-1.5"
-          >
+          <form onSubmit={e => { e.preventDefault(); addCriterion() }} className="flex gap-1.5">
             <input
               ref={newInputRef}
               type="text"
@@ -319,9 +360,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
               Add
             </button>
           </form>
-          {criteriaError && (
-            <p className="text-xs text-red-400">{criteriaError}</p>
-          )}
+          {criteriaError && <p className="text-xs text-red-400">{criteriaError}</p>}
         </div>
 
         <hr className="border-slate-800" />
@@ -335,7 +374,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
             <label className="block text-xs text-slate-500">Time (days)</label>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Planned</span>
+                <span className="text-xs text-slate-500">Planned</span>
                 <input
                   type="number" min="0" value={timePlanned}
                   onChange={e => setTimePlanned(e.target.value)}
@@ -345,7 +384,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
                 />
               </div>
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Actual</span>
+                <span className="text-xs text-slate-500">Actual</span>
                 <input
                   type="number" min="0" value={timeActual}
                   onChange={e => setTimeActual(e.target.value)}
@@ -367,7 +406,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
             <label className="block text-xs text-slate-500">Investment ({currency})</label>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Planned</span>
+                <span className="text-xs text-slate-500">Planned</span>
                 <input
                   type="number" min="0" value={investPlanned}
                   onChange={e => setInvestPlanned(e.target.value)}
@@ -377,7 +416,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
                 />
               </div>
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Actual</span>
+                <span className="text-xs text-slate-500">Actual</span>
                 <input
                   type="number" min="0" value={investActual}
                   onChange={e => setInvestActual(e.target.value)}
@@ -399,7 +438,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
             <label className="block text-xs text-slate-500">Return ({currency})</label>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Planned</span>
+                <span className="text-xs text-slate-500">Planned</span>
                 <input
                   type="number" value={returnPlanned}
                   onChange={e => setReturnPlanned(e.target.value)}
@@ -409,7 +448,7 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
                 />
               </div>
               <div className="space-y-0.5">
-                <span className="text-xs text-slate-600">Actual</span>
+                <span className="text-xs text-slate-500">Actual</span>
                 <input
                   type="number" value={returnActual}
                   onChange={e => setReturnActual(e.target.value)}
@@ -428,12 +467,6 @@ export default function ActivityPanel({ activity, currency, onClose, onSave, onD
         </div>
 
       </div>
-
-      {saving && (
-        <div className="px-4 py-2 border-t border-slate-800">
-          <p className="text-xs text-slate-500">Saving…</p>
-        </div>
-      )}
     </aside>
   )
 }
